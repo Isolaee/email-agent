@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "email_agent",
+  "project_id": "d55b6d4f-01be-442f-b962-05f5b6fdc722"
+}
