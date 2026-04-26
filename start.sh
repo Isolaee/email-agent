@@ -14,7 +14,7 @@ fi
 
 echo "Starting FastAPI on :8000 ..."
 # Kill any process already bound to port 8000
-OLD_PID=$(ss -tlnp 2>/dev/null | awk -F'pid=' '/\:8000 /{split($2,a,","); print a[1]}')
+OLD_PID=$(ss -tlnp 2>/dev/null | awk -F'pid=' '/:8000 /{split($2,a,","); print a[1]}')
 [ -n "$OLD_PID" ] && kill "$OLD_PID" 2>/dev/null && sleep 0.5
 .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
