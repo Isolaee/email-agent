@@ -88,6 +88,76 @@ class LabelUpdate(BaseModel):
     remove: list[str] = []
 
 
+class SendEmailBody(BaseModel):
+    account_id: int
+    to: str
+    subject: str
+    body: str
+
+
+class ReplyEmailBody(BaseModel):
+    body: str
+
+
+def _parse_email_address(sender: str) -> str:
+    """Extract bare address from 'Name <addr>' or return as-is."""
+    if "<" in sender and ">" in sender:
+        return sender.split("<")[1].rstrip(">").strip()
+    return sender.strip()
+
+
+@router.post("/send")
+async def send_email(body: SendEmailBody, db: AsyncSession = Depends(get_db)):
+    account = (await db.execute(select(Account).where(Account.id == body.account_id))).scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    if account.provider == "gmail":
+        from services.gmail_sync import gmail_send
+        sent_id = gmail_send(body.to, body.subject, body.body)
+    elif account.provider == "outlook":
+        from services.outlook_sync import outlook_send
+        await outlook_send(account.email, body.to, body.subject, body.body)
+        sent_id = None
+    elif account.provider == "imap":
+        from services.imap_sync import imap_send
+        await imap_send(body.to, body.subject, body.body)
+        sent_id = None
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported provider: {account.provider}")
+
+    return {"ok": True, "sent_id": sent_id}
+
+
+@router.post("/{email_id}/reply")
+async def reply_email(email_id: int, body: ReplyEmailBody, db: AsyncSession = Depends(get_db)):
+    stmt = select(Email, Account).join(Account).where(Email.id == email_id)
+    row = (await db.execute(stmt)).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Email not found")
+    email, account = row
+
+    reply_to = _parse_email_address(email.sender)
+    reply_subject = email.subject if email.subject.startswith("Re:") else f"Re: {email.subject}"
+
+    if account.provider == "gmail":
+        from services.gmail_sync import gmail_send
+        sent_id = gmail_send(reply_to, reply_subject, body.body, thread_id=email.thread_id)
+    elif account.provider == "outlook":
+        from services.outlook_sync import outlook_reply
+        await outlook_reply(account.email, email.message_id, body.body)
+        sent_id = None
+    elif account.provider == "imap":
+        from services.imap_sync import imap_send
+        # thread_id stores the RFC 2822 Message-ID for IMAP
+        await imap_send(reply_to, reply_subject, body.body, reply_to_message_id=email.thread_id)
+        sent_id = None
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported provider: {account.provider}")
+
+    return {"ok": True, "sent_id": sent_id}
+
+
 @router.patch("/{email_id}/labels")
 async def update_labels(email_id: int, body: LabelUpdate, db: AsyncSession = Depends(get_db)):
     stmt = select(Email, Account).join(Account).where(Email.id == email_id)

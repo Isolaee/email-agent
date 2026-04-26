@@ -3,15 +3,60 @@
 import json
 import email as email_lib
 import email.policy
+from email.mime.text import MIMEText
 from datetime import datetime, timezone
 
 import aioimaplib
+import aiosmtplib
 import html2text
 
 from config import get_settings
 from db.database import SessionLocal
 from db.models import Account, Email, SyncState
 from sqlalchemy import select
+
+
+async def imap_send(
+    to: str,
+    subject: str,
+    body: str,
+    reply_to_message_id: str | None = None,
+) -> None:
+    """Send an email via SMTP. reply_to_message_id sets In-Reply-To/References headers."""
+    settings = get_settings()
+    smtp_host = settings.smtp_host or settings.imap_host
+    smtp_username = settings.smtp_username or settings.imap_username
+    smtp_password = settings.smtp_password or settings.imap_password
+
+    if not smtp_host or not smtp_username:
+        raise RuntimeError("SMTP not configured — set SMTP_HOST (or IMAP_HOST) and SMTP_USERNAME in .env")
+
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["To"] = to
+    msg["From"] = smtp_username
+    msg["Subject"] = subject
+    if reply_to_message_id:
+        msg["In-Reply-To"] = reply_to_message_id
+        msg["References"] = reply_to_message_id
+
+    if settings.smtp_ssl:
+        await aiosmtplib.send(
+            msg,
+            hostname=smtp_host,
+            port=settings.smtp_port,
+            username=smtp_username,
+            password=smtp_password,
+            use_tls=True,
+        )
+    else:
+        await aiosmtplib.send(
+            msg,
+            hostname=smtp_host,
+            port=settings.smtp_port,
+            username=smtp_username,
+            password=smtp_password,
+            start_tls=True,
+        )
 
 
 async def modify_imap_flags(uid: str, add_flags: list[str], remove_flags: list[str]) -> None:

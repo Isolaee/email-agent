@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 TOKENS_DIR = Path("tokens")
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
-SCOPES = ["Mail.Read", "User.Read"]
+SCOPES = ["Mail.Read", "Mail.Send", "User.Read"]
 REDIRECT_URI = "http://localhost:8000/api/auth/microsoft/callback"
 
 _msal_apps: dict[str, msal.ConfidentialClientApplication] = {}
@@ -102,6 +102,35 @@ async def _get_access_token(account: str) -> str:
             return result["access_token"]
 
     raise RuntimeError(f"Cannot refresh token for {account} — re-authenticate at /api/auth/microsoft")
+
+
+async def outlook_send(account_email: str, to: str, subject: str, body: str) -> None:
+    """Send a new email from an Outlook account via Microsoft Graph."""
+    access_token = await _get_access_token(account_email)
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+    payload = {
+        "message": {
+            "subject": subject,
+            "body": {"contentType": "Text", "content": body},
+            "toRecipients": [{"emailAddress": {"address": to}}],
+        }
+    }
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(f"{GRAPH_BASE}/me/sendMail", json=payload, headers=headers)
+        resp.raise_for_status()
+
+
+async def outlook_reply(account_email: str, message_id: str, body: str) -> None:
+    """Reply to an existing Outlook message thread via Microsoft Graph."""
+    access_token = await _get_access_token(account_email)
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{GRAPH_BASE}/me/messages/{message_id}/reply",
+            json={"comment": body},
+            headers=headers,
+        )
+        resp.raise_for_status()
 
 
 async def sync_outlook():

@@ -4,6 +4,7 @@ import json
 import os
 import base64
 import email as email_lib
+from email.mime.text import MIMEText
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -170,6 +171,20 @@ async def _full_sync(service, account_id: int, db) -> tuple[int, str]:
     history_id = results.get("historyId", "0")
     fetched = await _fetch_and_store_messages(service, account_id, msg_ids, db)
     return fetched, history_id
+
+
+def gmail_send(to: str, subject: str, body: str, thread_id: str | None = None) -> str:
+    """Send a new email or reply via Gmail API. Returns the sent message ID."""
+    service = _get_service()
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["To"] = to
+    msg["Subject"] = subject
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    send_body: dict = {"raw": raw}
+    if thread_id:
+        send_body["threadId"] = thread_id
+    result = service.users().messages().send(userId="me", body=send_body).execute()
+    return result["id"]
 
 
 def modify_gmail_labels(message_id: str, add_labels: list[str], remove_labels: list[str]) -> None:

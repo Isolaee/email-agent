@@ -8,6 +8,7 @@ interface Props {
   refreshKey?: number;
   labelFilter?: string | null;
   onLabelFilterChange?: (label: string | null) => void;
+  onCompose?: () => void;
 }
 
 const PROVIDER_COLORS: Record<string, string> = {
@@ -28,7 +29,7 @@ const HIDDEN_LABELS = new Set(["INBOX", "UNREAD", "STARRED", "\\Seen", "\\Recent
 
 type SortField = "date" | "sender" | "subject";
 
-export default function EmailList({ selectedId, onSelect, refreshKey, labelFilter, onLabelFilterChange }: Props) {
+export default function EmailList({ selectedId, onSelect, refreshKey, labelFilter, onLabelFilterChange, onCompose }: Props) {
   const [emails, setEmails] = useState<EmailSummary[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedAccount, setSelectedAccount] = useState<number | undefined>();
@@ -117,7 +118,10 @@ export default function EmailList({ selectedId, onSelect, refreshKey, labelFilte
             <input type="checkbox" checked={unreadOnly} onChange={(e) => setUnreadOnly(e.target.checked)} />
             Unread
           </label>
-          <button onClick={load} className="text-xs text-gray-500 hover:text-gray-300">↻</button>
+          <button onClick={load} className="text-xs text-gray-500 hover:text-gray-300" title="Refresh">↻</button>
+          {onCompose && (
+            <button onClick={onCompose} className="text-xs text-gray-500 hover:text-gray-300" title="Compose">✏</button>
+          )}
         </div>
 
         {/* Sort controls */}

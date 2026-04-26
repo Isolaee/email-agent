@@ -98,6 +98,14 @@ export interface LabelUpdateResult {
 export const updateLabels = (id: number, add: string[], remove: string[]) =>
   patch<LabelUpdateResult>(`/api/emails/${id}/labels`, { add, remove });
 
+export interface SendResult { ok: boolean; sent_id: string | null }
+
+export const sendEmail = (account_id: number, to: string, subject: string, body: string) =>
+  post<SendResult>("/api/emails/send", { account_id, to, subject, body });
+
+export const replyToEmail = (email_id: number, body: string) =>
+  post<SendResult>(`/api/emails/${email_id}/reply`, { body });
+
 export const listEmails =(params?: { account_id?: number; search?: string; unread_only?: boolean; limit?: number; offset?: number }) => {
   const q = new URLSearchParams();
   if (params?.account_id) q.set("account_id", String(params.account_id));

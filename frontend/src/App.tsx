@@ -2,6 +2,7 @@ import { useState } from "react";
 import Sidebar from "./components/Sidebar";
 import EmailList from "./components/EmailList";
 import EmailDetail from "./components/EmailDetail";
+import ComposeModal from "./components/ComposeModal";
 import CalendarView from "./components/CalendarView";
 import ChatPanel from "./components/ChatPanel";
 import AuthSetup from "./components/AuthSetup";
@@ -15,6 +16,7 @@ function App() {
   const [chatOpen, setChatOpen] = useState(false);
   const [emailRefreshKey, setEmailRefreshKey] = useState(0);
   const [labelFilter, setLabelFilter] = useState<string | null>(null);
+  const [composeOpen, setComposeOpen] = useState(false);
 
   useNotifications(() => setEmailRefreshKey((k) => k + 1));
 
@@ -31,6 +33,7 @@ function App() {
               refreshKey={emailRefreshKey}
               labelFilter={labelFilter}
               onLabelFilterChange={setLabelFilter}
+              onCompose={() => setComposeOpen(true)}
             />
             <div className="flex-1 overflow-hidden">
               {selectedEmailId ? (
@@ -52,6 +55,7 @@ function App() {
       </div>
 
       {chatOpen && <ChatPanel onClose={() => setChatOpen(false)} />}
+      {composeOpen && <ComposeModal onClose={() => setComposeOpen(false)} />}
     </div>
   );
 }

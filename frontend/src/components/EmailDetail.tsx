@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getEmail, updateLabels, type EmailDetail as TEmailDetail } from "../api";
+import { getEmail, updateLabels, replyToEmail, type EmailDetail as TEmailDetail } from "../api";
 import { format } from "date-fns";
 
 interface Props {
@@ -20,6 +20,10 @@ export default function EmailDetail({ emailId, onClose, onLabelsChanged }: Props
   const [labels, setLabels] = useState<string[]>([]);
   const [newLabel, setNewLabel] = useState("");
   const [addingLabel, setAddingLabel] = useState(false);
+  const [replyOpen, setReplyOpen] = useState(false);
+  const [replyBody, setReplyBody] = useState("");
+  const [replySending, setReplySending] = useState(false);
+  const [replyStatus, setReplyStatus] = useState<"idle" | "ok" | "error">("idle");
 
   useEffect(() => {
     setLoading(true);
@@ -57,6 +61,22 @@ export default function EmailDetail({ emailId, onClose, onLabelsChanged }: Props
       onLabelsChanged?.();
     } catch {
       setLabels(prev);
+    }
+  }
+
+  async function handleSendReply() {
+    if (!replyBody.trim() || !email) return;
+    setReplySending(true);
+    setReplyStatus("idle");
+    try {
+      await replyToEmail(email.id, replyBody);
+      setReplyStatus("ok");
+      setReplyBody("");
+      setReplyOpen(false);
+    } catch {
+      setReplyStatus("error");
+    } finally {
+      setReplySending(false);
     }
   }
 
@@ -136,6 +156,54 @@ export default function EmailDetail({ emailId, onClose, onLabelsChanged }: Props
         <pre className="text-sm text-gray-300 whitespace-pre-wrap font-sans leading-relaxed">
           {email.body_text || "(empty)"}
         </pre>
+      </div>
+
+      {/* Reply composer */}
+      <div className="border-t border-gray-800 px-6 py-3 shrink-0">
+        {replyStatus === "ok" && (
+          <p className="text-xs text-green-400 mb-2">Reply sent.</p>
+        )}
+        {replyStatus === "error" && (
+          <p className="text-xs text-red-400 mb-2">Failed to send. Try again.</p>
+        )}
+        {replyOpen ? (
+          <div className="space-y-2">
+            <div className="text-xs text-gray-500">
+              To: <span className="text-gray-300">{email.sender}</span>
+              {" · "}Re: {email.subject}
+            </div>
+            <textarea
+              autoFocus
+              value={replyBody}
+              onChange={e => setReplyBody(e.target.value)}
+              placeholder="Write your reply…"
+              rows={5}
+              className="w-full bg-gray-800 text-gray-100 text-sm px-3 py-2 rounded-lg outline-none focus:ring-1 ring-blue-500 placeholder-gray-500 resize-none"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={handleSendReply}
+                disabled={replySending || !replyBody.trim()}
+                className="px-4 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-lg transition-colors"
+              >
+                {replySending ? "Sending…" : "Send"}
+              </button>
+              <button
+                onClick={() => { setReplyOpen(false); setReplyBody(""); setReplyStatus("idle"); }}
+                className="px-4 py-1.5 text-sm text-gray-400 hover:text-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => { setReplyOpen(true); setReplyStatus("idle"); }}
+            className="text-sm text-gray-500 hover:text-gray-300 transition-colors"
+          >
+            ↩ Reply
+          </button>
+        )}
       </div>
     </div>
   );

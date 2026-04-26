@@ -117,6 +117,38 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "send_email",
+            "description": "Send a new email from one of the user's accounts.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "account_email": {"type": "string", "description": "The sender account email address"},
+                    "to": {"type": "string", "description": "Recipient email address"},
+                    "subject": {"type": "string"},
+                    "body": {"type": "string", "description": "Plain text email body"},
+                },
+                "required": ["account_email", "to", "subject", "body"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "reply_to_email",
+            "description": "Reply to an existing email. The recipient, subject, and thread are derived from the original.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "email_id": {"type": "integer", "description": "ID of the email to reply to"},
+                    "body": {"type": "string", "description": "Plain text reply body"},
+                },
+                "required": ["email_id", "body"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "label_email",
             "description": (
                 "Apply or remove labels on an email and sync the change to the provider. "
@@ -160,6 +192,10 @@ async def _call_tool(name: str, args: dict) -> str:
         return await _create_calendar_event(**args)
     if name == "delete_calendar_event":
         return await _delete_calendar_event(**args)
+    if name == "send_email":
+        return await _send_email(**args)
+    if name == "reply_to_email":
+        return await _reply_to_email(**args)
     if name == "label_email":
         return await _label_email(**args)
     return f"Unknown tool: {name}"
@@ -250,6 +286,68 @@ async def _create_calendar_event(title: str, start_time: str, end_time: str, des
         return f"Event created: {event.get('id')} — {title} at {start_time}"
     except Exception as e:
         return f"Failed to create event: {e}"
+
+
+def _parse_addr(sender: str) -> str:
+    if "<" in sender and ">" in sender:
+        return sender.split("<")[1].rstrip(">").strip()
+    return sender.strip()
+
+
+async def _send_email(account_email: str, to: str, subject: str, body: str) -> str:
+    async with SessionLocal() as db:
+        account = (await db.execute(select(Account).where(Account.email == account_email))).scalar_one_or_none()
+        if not account:
+            return f"Account {account_email} not found."
+
+    try:
+        if account.provider == "gmail":
+            from services.gmail_sync import gmail_send
+            sent_id = gmail_send(to, subject, body)
+            return f"Email sent via Gmail. Message ID: {sent_id}"
+        elif account.provider == "outlook":
+            from services.outlook_sync import outlook_send
+            await outlook_send(account_email, to, subject, body)
+            return "Email sent via Outlook."
+        elif account.provider == "imap":
+            from services.imap_sync import imap_send
+            await imap_send(to, subject, body)
+            return "Email sent via SMTP."
+        else:
+            return f"Unsupported provider: {account.provider}"
+    except Exception as exc:
+        return f"Failed to send email: {exc}"
+
+
+async def _reply_to_email(email_id: int, body: str) -> str:
+    async with SessionLocal() as db:
+        stmt = select(Email, Account).join(Account).where(Email.id == email_id)
+        row = (await db.execute(stmt)).first()
+        if not row:
+            return f"Email {email_id} not found."
+        email, account = row
+        reply_to = _parse_addr(email.sender)
+        reply_subject = email.subject if email.subject.startswith("Re:") else f"Re: {email.subject}"
+        thread_id = email.thread_id
+        message_id = email.message_id
+
+    try:
+        if account.provider == "gmail":
+            from services.gmail_sync import gmail_send
+            sent_id = gmail_send(reply_to, reply_subject, body, thread_id=thread_id)
+            return f"Reply sent via Gmail. Message ID: {sent_id}"
+        elif account.provider == "outlook":
+            from services.outlook_sync import outlook_reply
+            await outlook_reply(account.email, message_id, body)
+            return "Reply sent via Outlook."
+        elif account.provider == "imap":
+            from services.imap_sync import imap_send
+            await imap_send(reply_to, reply_subject, body, reply_to_message_id=thread_id)
+            return "Reply sent via SMTP."
+        else:
+            return f"Unsupported provider: {account.provider}"
+    except Exception as exc:
+        return f"Failed to send reply: {exc}"
 
 
 async def _label_email(
