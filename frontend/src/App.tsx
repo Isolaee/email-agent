@@ -14,6 +14,7 @@ function App() {
   const [selectedEmailId, setSelectedEmailId] = useState<number | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [emailRefreshKey, setEmailRefreshKey] = useState(0);
+  const [labelFilter, setLabelFilter] = useState<string | null>(null);
 
   useNotifications(() => setEmailRefreshKey((k) => k + 1));
 
@@ -24,10 +25,20 @@ function App() {
       <div className="flex flex-1 overflow-hidden">
         {view === "inbox" && (
           <>
-            <EmailList selectedId={selectedEmailId} onSelect={setSelectedEmailId} refreshKey={emailRefreshKey} />
+            <EmailList
+              selectedId={selectedEmailId}
+              onSelect={setSelectedEmailId}
+              refreshKey={emailRefreshKey}
+              labelFilter={labelFilter}
+              onLabelFilterChange={setLabelFilter}
+            />
             <div className="flex-1 overflow-hidden">
               {selectedEmailId ? (
-                <EmailDetail emailId={selectedEmailId} onClose={() => setSelectedEmailId(null)} />
+                <EmailDetail
+                  emailId={selectedEmailId}
+                  onClose={() => setSelectedEmailId(null)}
+                  onLabelsChanged={() => setEmailRefreshKey(k => k + 1)}
+                />
               ) : (
                 <div className="flex items-center justify-center h-full text-gray-500 text-sm">
                   Select an email to read

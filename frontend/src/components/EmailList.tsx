@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { listEmails, listAccounts, type EmailSummary, type Account } from "../api";
 import { formatDistanceToNow } from "date-fns";
 
@@ -6,6 +6,8 @@ interface Props {
   selectedId: number | null;
   onSelect: (id: number) => void;
   refreshKey?: number;
+  labelFilter?: string | null;
+  onLabelFilterChange?: (label: string | null) => void;
 }
 
 const PROVIDER_COLORS: Record<string, string> = {
@@ -14,12 +16,26 @@ const PROVIDER_COLORS: Record<string, string> = {
   imap: "bg-green-600",
 };
 
-export default function EmailList({ selectedId, onSelect, refreshKey }: Props) {
+// Strip noisy prefixes for display
+function displayLabel(l: string): string {
+  if (l.startsWith("CATEGORY_")) return l.slice(9);
+  if (l.startsWith("\\")) return l.slice(1);
+  return l;
+}
+
+// Labels that are already surfaced through dedicated UI (read/starred/account filter)
+const HIDDEN_LABELS = new Set(["INBOX", "UNREAD", "STARRED", "\\Seen", "\\Recent", "\\Answered", "\\Deleted"]);
+
+type SortField = "date" | "sender" | "subject";
+
+export default function EmailList({ selectedId, onSelect, refreshKey, labelFilter, onLabelFilterChange }: Props) {
   const [emails, setEmails] = useState<EmailSummary[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedAccount, setSelectedAccount] = useState<number | undefined>();
   const [search, setSearch] = useState("");
   const [unreadOnly, setUnreadOnly] = useState(false);
+  const [sortBy, setSortBy] = useState<SortField>("date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -38,11 +54,42 @@ export default function EmailList({ selectedId, onSelect, refreshKey }: Props) {
 
   useEffect(() => { load(); }, [load, refreshKey]);
 
-  // Debounce search
   useEffect(() => {
     const t = setTimeout(load, 300);
     return () => clearTimeout(t);
   }, [search, load]);
+
+  const allLabels = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of emails) {
+      for (const l of e.labels) {
+        if (!HIDDEN_LABELS.has(l)) set.add(l);
+      }
+    }
+    return [...set].sort();
+  }, [emails]);
+
+  const displayedEmails = useMemo(() => {
+    let result = labelFilter ? emails.filter(e => e.labels.includes(labelFilter)) : [...emails];
+    result.sort((a, b) => {
+      let av = "", bv = "";
+      if (sortBy === "date") { av = a.date ?? ""; bv = b.date ?? ""; }
+      else if (sortBy === "sender") { av = a.sender.toLowerCase(); bv = b.sender.toLowerCase(); }
+      else { av = a.subject.toLowerCase(); bv = b.subject.toLowerCase(); }
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return sortDir === "desc" ? -cmp : cmp;
+    });
+    return result;
+  }, [emails, labelFilter, sortBy, sortDir]);
+
+  function toggleSort(field: SortField) {
+    if (sortBy === field) {
+      setSortDir(d => d === "desc" ? "asc" : "desc");
+    } else {
+      setSortBy(field);
+      setSortDir(field === "date" ? "desc" : "asc");
+    }
+  }
 
   return (
     <div className="w-80 border-r border-gray-800 flex flex-col shrink-0 bg-gray-950">
@@ -72,15 +119,52 @@ export default function EmailList({ selectedId, onSelect, refreshKey }: Props) {
           </label>
           <button onClick={load} className="text-xs text-gray-500 hover:text-gray-300">↻</button>
         </div>
+
+        {/* Sort controls */}
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] text-gray-600 mr-1">Sort:</span>
+          {(["date", "sender", "subject"] as SortField[]).map(f => (
+            <button
+              key={f}
+              onClick={() => toggleSort(f)}
+              className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+                sortBy === f
+                  ? "bg-blue-700 text-white"
+                  : "text-gray-500 hover:text-gray-300"
+              }`}
+            >
+              {f}{sortBy === f ? (sortDir === "desc" ? " ↓" : " ↑") : ""}
+            </button>
+          ))}
+        </div>
+
+        {/* Label filter chips */}
+        {allLabels.length > 0 && (
+          <div className="flex gap-1 flex-wrap">
+            {allLabels.map(l => (
+              <button
+                key={l}
+                onClick={() => onLabelFilterChange?.(labelFilter === l ? null : l)}
+                className={`text-[10px] px-1.5 py-0.5 rounded-full border transition-colors ${
+                  labelFilter === l
+                    ? "bg-blue-600 border-blue-600 text-white"
+                    : "border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300"
+                }`}
+              >
+                {displayLabel(l)}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* List */}
       <div className="flex-1 overflow-y-auto">
         {loading && <div className="text-center text-gray-600 text-xs py-8">Loading…</div>}
-        {!loading && emails.length === 0 && (
+        {!loading && displayedEmails.length === 0 && (
           <div className="text-center text-gray-600 text-xs py-8">No emails</div>
         )}
-        {emails.map((email) => (
+        {displayedEmails.map((email) => (
           <button
             key={email.id}
             onClick={() => onSelect(email.id)}

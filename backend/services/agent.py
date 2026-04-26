@@ -114,6 +114,36 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "label_email",
+            "description": (
+                "Apply or remove labels on an email and sync the change to the provider. "
+                "For Gmail use Gmail label IDs (e.g. 'STARRED', 'UNREAD', or a custom label ID like 'Label_xxx'). "
+                "For IMAP use IMAP flag names (e.g. '\\\\Flagged', '\\\\Seen')."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "email_id": {"type": "integer", "description": "The email's numeric ID"},
+                    "add_labels": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Labels to add",
+                        "default": [],
+                    },
+                    "remove_labels": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Labels to remove",
+                        "default": [],
+                    },
+                },
+                "required": ["email_id"],
+            },
+        },
+    },
 ]
 
 
@@ -130,6 +160,8 @@ async def _call_tool(name: str, args: dict) -> str:
         return await _create_calendar_event(**args)
     if name == "delete_calendar_event":
         return await _delete_calendar_event(**args)
+    if name == "label_email":
+        return await _label_email(**args)
     return f"Unknown tool: {name}"
 
 
@@ -218,6 +250,64 @@ async def _create_calendar_event(title: str, start_time: str, end_time: str, des
         return f"Event created: {event.get('id')} — {title} at {start_time}"
     except Exception as e:
         return f"Failed to create event: {e}"
+
+
+async def _label_email(
+    email_id: int,
+    add_labels: list[str] | None = None,
+    remove_labels: list[str] | None = None,
+) -> str:
+    add = add_labels or []
+    remove = remove_labels or []
+
+    async with SessionLocal() as db:
+        stmt = select(Email, Account).join(Account).where(Email.id == email_id)
+        row = (await db.execute(stmt)).first()
+        if not row:
+            return f"Email {email_id} not found."
+        email, account = row
+
+        current = set(json.loads(email.labels) if email.labels else [])
+        current.update(add)
+        current.difference_update(remove)
+        email.labels = json.dumps(sorted(current))
+
+        if account.provider == "gmail":
+            if "UNREAD" in add:
+                email.is_read = False
+            if "UNREAD" in remove:
+                email.is_read = True
+            if "STARRED" in add:
+                email.is_starred = True
+            if "STARRED" in remove:
+                email.is_starred = False
+        elif account.provider == "imap":
+            if "\\Seen" in add:
+                email.is_read = True
+            if "\\Seen" in remove:
+                email.is_read = False
+            if "\\Flagged" in add:
+                email.is_starred = True
+            if "\\Flagged" in remove:
+                email.is_starred = False
+
+        await db.commit()
+
+    try:
+        if account.provider == "gmail":
+            from services.gmail_sync import modify_gmail_labels
+            modify_gmail_labels(email.message_id, add, remove)
+        elif account.provider == "imap":
+            from services.imap_sync import modify_imap_flags
+            uid = email.message_id.rsplit("_", 1)[-1]
+            await modify_imap_flags(uid, add, remove)
+    except Exception as exc:
+        return f"Labels updated locally but provider sync failed: {exc}"
+
+    return (
+        f"Labels updated for email {email_id}. "
+        f"Added: {add}. Removed: {remove}. Current labels: {sorted(current)}"
+    )
 
 
 async def _delete_calendar_event(event_id: str) -> str:
