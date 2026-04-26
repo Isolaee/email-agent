@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     secret_key: str = "change-me"
 
     class Config:
-        env_file = ".env"
+        env_file = "../.env"
 
     @property
     def gmail_account_list(self) -> list[str]:

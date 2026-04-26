@@ -231,7 +231,7 @@ async def _delete_calendar_event(event_id: str) -> str:
 
 async def run_agent(messages: list[dict]) -> AsyncGenerator[str, None]:
     settings = get_settings()
-    client = AsyncOpenAI(base_url=f"{settings.ollama_base_url}/v1", api_key="ollama")
+    client = AsyncOpenAI(base_url=f"{settings.ollama_base_url}/v1", api_key="ollama", timeout=300.0)
 
     conversation = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
 

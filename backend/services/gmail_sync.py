@@ -24,7 +24,7 @@ SCOPES = [
 ]
 TOKENS_DIR = Path("tokens")
 GMAIL_TOKEN_FILE = TOKENS_DIR / "gmail_token.json"
-REDIRECT_URI = "http://localhost:8000/api/auth/google/callback"
+_DEFAULT_BASE_URL = "http://localhost:8000"
 
 
 def _ensure_tokens_dir():
@@ -50,38 +50,29 @@ def is_gmail_authenticated() -> bool:
     return _load_credentials() is not None
 
 
-def get_gmail_auth_url() -> str:
+def _client_config(settings):
+    return {
+        "web": {
+            "client_id": settings.google_client_id,
+            "client_secret": settings.google_client_secret,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+    }
+
+
+def get_gmail_auth_url(base_url: str = _DEFAULT_BASE_URL) -> str:
     settings = get_settings()
-    flow = Flow.from_client_config(
-        {
-            "web": {
-                "client_id": settings.google_client_id,
-                "client_secret": settings.google_client_secret,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-            }
-        },
-        scopes=SCOPES,
-        redirect_uri=REDIRECT_URI,
-    )
+    redirect_uri = f"{base_url}/api/auth/google/callback"
+    flow = Flow.from_client_config(_client_config(settings), scopes=SCOPES, redirect_uri=redirect_uri)
     url, _ = flow.authorization_url(access_type="offline", prompt="consent")
     return url
 
 
-async def handle_gmail_callback(code: str):
+async def handle_gmail_callback(code: str, base_url: str = _DEFAULT_BASE_URL):
     settings = get_settings()
-    flow = Flow.from_client_config(
-        {
-            "web": {
-                "client_id": settings.google_client_id,
-                "client_secret": settings.google_client_secret,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-            }
-        },
-        scopes=SCOPES,
-        redirect_uri=REDIRECT_URI,
-    )
+    redirect_uri = f"{base_url}/api/auth/google/callback"
+    flow = Flow.from_client_config(_client_config(settings), scopes=SCOPES, redirect_uri=redirect_uri)
     flow.fetch_token(code=code)
     _save_credentials(flow.credentials)
 
