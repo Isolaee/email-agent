@@ -146,8 +146,13 @@ async def update_calendar_event(event_id: str, updates: dict) -> dict:
 
 
 async def delete_calendar_event(event_id: str):
+    from googleapiclient.errors import HttpError
     service = _get_service()
-    service.events().delete(calendarId="primary", eventId=event_id).execute()
+    try:
+        service.events().delete(calendarId="primary", eventId=event_id).execute()
+    except HttpError as e:
+        if e.resp.status not in (404, 410):
+            raise
     async with SessionLocal() as db:
         row = (await db.execute(select(CalendarEvent).where(CalendarEvent.google_event_id == event_id))).scalar_one_or_none()
         if row:
