@@ -19,6 +19,9 @@ OLD_PID=$(ss -tlnp 2>/dev/null | awk -F'pid=' '/:8000 /{split($2,a,","); print a
 .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
 
+echo "Waiting for backend to be ready..."
+until curl -s http://localhost:8000/docs > /dev/null 2>&1; do sleep 0.2; done
+
 # Start frontend dev server
 cd "$SCRIPT_DIR/frontend"
 if [ ! -d "node_modules" ]; then
