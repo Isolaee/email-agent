@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 from sqlalchemy import String, Text, DateTime, Boolean, Integer, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from db.database import Base
@@ -11,7 +12,7 @@ class Account(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     provider: Mapped[str] = mapped_column(String(32))  # gmail | outlook | imap
     display_name: Mapped[str] = mapped_column(String(255), default="")
-    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     emails: Mapped[list["Email"]] = relationship(back_populates="account")
 
@@ -22,11 +23,11 @@ class Email(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), index=True)
     message_id: Mapped[str] = mapped_column(String(512), unique=True, index=True)
-    thread_id: Mapped[str | None] = mapped_column(String(512), index=True, nullable=True)
+    thread_id: Mapped[Optional[str]] = mapped_column(String(512), index=True, nullable=True)
     subject: Mapped[str] = mapped_column(Text, default="")
     sender: Mapped[str] = mapped_column(String(512), default="")
     recipients: Mapped[str] = mapped_column(Text, default="")  # JSON list
-    date: Mapped[datetime | None] = mapped_column(DateTime, index=True, nullable=True)
+    date: Mapped[Optional[datetime]] = mapped_column(DateTime, index=True, nullable=True)
     body_text: Mapped[str] = mapped_column(Text, default="")
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
     is_starred: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -44,12 +45,12 @@ class CalendarEvent(Base):
     title: Mapped[str] = mapped_column(Text, default="")
     description: Mapped[str] = mapped_column(Text, default="")
     location: Mapped[str] = mapped_column(Text, default="")
-    start_time: Mapped[datetime | None] = mapped_column(DateTime, index=True, nullable=True)
-    end_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    start_time: Mapped[Optional[datetime]] = mapped_column(DateTime, index=True, nullable=True)
+    end_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     is_all_day: Mapped[bool] = mapped_column(Boolean, default=False)
     attendees: Mapped[str] = mapped_column(Text, default="")  # JSON list
     calendar_id: Mapped[str] = mapped_column(String(255), default="primary")
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class SyncState(Base):
