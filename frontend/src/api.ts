@@ -79,8 +79,26 @@ async function del(path: string): Promise<void> {
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
 }
 
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  return res.json();
+}
+
 // Emails
-export const listEmails = (params?: { account_id?: number; search?: string; unread_only?: boolean; limit?: number; offset?: number }) => {
+export interface LabelUpdateResult {
+  id: number;
+  labels: string[];
+}
+
+export const updateLabels = (id: number, add: string[], remove: string[]) =>
+  patch<LabelUpdateResult>(`/api/emails/${id}/labels`, { add, remove });
+
+export const listEmails =(params?: { account_id?: number; search?: string; unread_only?: boolean; limit?: number; offset?: number }) => {
   const q = new URLSearchParams();
   if (params?.account_id) q.set("account_id", String(params.account_id));
   if (params?.search) q.set("search", params.search);

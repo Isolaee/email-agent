@@ -20,7 +20,7 @@ from services.notifier import broadcast
 from sqlalchemy import select
 
 SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/calendar",
 ]
 TOKENS_DIR = Path("tokens")
@@ -170,6 +170,15 @@ async def _full_sync(service, account_id: int, db) -> tuple[int, str]:
     history_id = results.get("historyId", "0")
     fetched = await _fetch_and_store_messages(service, account_id, msg_ids, db)
     return fetched, history_id
+
+
+def modify_gmail_labels(message_id: str, add_labels: list[str], remove_labels: list[str]) -> None:
+    service = _get_service()
+    service.users().messages().modify(
+        userId="me",
+        id=message_id,
+        body={"addLabelIds": add_labels, "removeLabelIds": remove_labels},
+    ).execute()
 
 
 async def _fetch_and_store_messages(service, account_id: int, msg_ids: list[str], db) -> int:

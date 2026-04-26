@@ -14,6 +14,33 @@ from db.models import Account, Email, SyncState
 from sqlalchemy import select
 
 
+async def modify_imap_flags(uid: str, add_flags: list[str], remove_flags: list[str]) -> None:
+    settings = get_settings()
+    if not settings.imap_host or not settings.imap_username:
+        return
+
+    if settings.imap_use_ssl:
+        client = aioimaplib.IMAP4_SSL(host=settings.imap_host, port=settings.imap_port)
+    else:
+        client = aioimaplib.IMAP4(host=settings.imap_host, port=settings.imap_port)
+
+    await client.wait_hello_from_server()
+    login_status, _ = await client.login(settings.imap_username, settings.imap_password)
+    if login_status != "OK":
+        raise RuntimeError(f"IMAP login failed: {login_status}")
+
+    await client.select("INBOX")
+
+    if add_flags:
+        flags_str = " ".join(add_flags)
+        await client.uid("store", uid, f"+FLAGS ({flags_str})")
+    if remove_flags:
+        flags_str = " ".join(remove_flags)
+        await client.uid("store", uid, f"-FLAGS ({flags_str})")
+
+    await client.logout()
+
+
 async def sync_imap():
     settings = get_settings()
     if not settings.imap_host or not settings.imap_username:
@@ -31,7 +58,10 @@ async def _sync_account():
         client = aioimaplib.IMAP4(host=settings.imap_host, port=settings.imap_port)
 
     await client.wait_hello_from_server()
-    await client.login(settings.imap_username, settings.imap_password)
+    login_status, _ = await client.login(settings.imap_username, settings.imap_password)
+    if login_status != "OK":
+        print(f"[imap] Login failed: {login_status}")
+        return
 
     async with SessionLocal() as db:
         acc = (await db.execute(select(Account).where(Account.email == settings.imap_username))).scalar_one_or_none()
@@ -45,16 +75,22 @@ async def _sync_account():
         state_row = (await db.execute(select(SyncState).where(SyncState.key == state_key))).scalar_one_or_none()
         last_uid = int(state_row.value) if state_row and state_row.value else 0
 
-        await client.select("INBOX")
+        select_status, select_data = await client.select("INBOX")
+        print(f"[imap] SELECT INBOX: {select_status}, data={select_data}")
+        if select_status != "OK":
+            print(f"[imap] Failed to select INBOX")
+            return
 
         # Search for messages newer than last synced UID
         if last_uid > 0:
-            _, data = await client.uid("search", f"UID {last_uid + 1}:*")
+            search_status, data = await client.uid("search", f"UID {last_uid + 1}:*")
         else:
-            _, data = await client.uid("search", "ALL")
+            search_status, data = await client.uid("search", "ALL")
 
-        uid_list = data[0].decode().split() if data[0] else []
+        print(f"[imap] SEARCH: status={search_status}, raw_data={data!r}")
+        uid_list = data[0].decode().split() if data and data[0] else []
         uid_list = [u for u in uid_list if int(u) > last_uid]
+        print(f"[imap] UIDs to fetch: {uid_list[:20]}{'...' if len(uid_list) > 20 else ''} (total {len(uid_list)})")
 
         fetched = 0
         max_uid = last_uid
@@ -67,17 +103,30 @@ async def _sync_account():
                 max_uid = max(max_uid, uid_int)
                 continue
 
-            _, msg_data = await client.uid("fetch", uid, "(RFC822 FLAGS)")
+            fetch_status, msg_data = await client.uid("fetch", uid, "(RFC822 FLAGS)")
+            print(f"[imap] FETCH uid={uid}: status={fetch_status}, parts={len(msg_data) if msg_data else 0}, types={[type(p).__name__ for p in (msg_data or [])]}")
             if not msg_data or not msg_data[0]:
+                print(f"[imap] uid={uid}: empty fetch response, skipping")
                 continue
 
             raw = None
             flags = []
             for part in msg_data:
-                if isinstance(part, bytes) and part != b")":
-                    raw = part
-                elif isinstance(part, str) and "FLAGS" in part:
-                    flags = part.split("FLAGS")[1].strip().strip("()").split()
+                if isinstance(part, (bytes, bytearray)) and part not in (b")", b" "):
+                    # First element is the IMAP header line (FLAGS, size), subsequent bytes element is the email
+                    if raw is None:
+                        raw = part  # tentatively the header
+                    else:
+                        raw = part  # overwrite with actual email content
+                if isinstance(part, (bytes, str)):
+                    part_str = part.decode() if isinstance(part, bytes) else part
+                    if "FLAGS" in part_str:
+                        try:
+                            flags_section = part_str.split("FLAGS")[1].strip().strip("()").split()
+                            if flags_section:
+                                flags = flags_section
+                        except Exception:
+                            pass
 
             if not raw:
                 continue

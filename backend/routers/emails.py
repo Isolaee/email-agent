@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, or_
 from db.database import get_db
@@ -61,7 +62,6 @@ async def get_email(email_id: int, db: AsyncSession = Depends(get_db)):
     stmt = select(Email, Account.email.label("account_email"), Account.provider).join(Account).where(Email.id == email_id)
     row = (await db.execute(stmt)).first()
     if not row:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Email not found")
     e, account_email, provider = row
     return {
@@ -81,6 +81,65 @@ async def get_email(email_id: int, db: AsyncSession = Depends(get_db)):
         "labels": json.loads(e.labels) if e.labels else [],
         "snippet": e.raw_snippet,
     }
+
+
+class LabelUpdate(BaseModel):
+    add: list[str] = []
+    remove: list[str] = []
+
+
+@router.patch("/{email_id}/labels")
+async def update_labels(email_id: int, body: LabelUpdate, db: AsyncSession = Depends(get_db)):
+    stmt = select(Email, Account).join(Account).where(Email.id == email_id)
+    row = (await db.execute(stmt)).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Email not found")
+    email, account = row
+
+    current = set(json.loads(email.labels) if email.labels else [])
+    current.update(body.add)
+    current.difference_update(body.remove)
+    email.labels = json.dumps(sorted(current))
+
+    # Keep is_read / is_starred in sync with label changes
+    if account.provider == "gmail":
+        if "UNREAD" in body.add:
+            email.is_read = False
+        if "UNREAD" in body.remove:
+            email.is_read = True
+        if "STARRED" in body.add:
+            email.is_starred = True
+        if "STARRED" in body.remove:
+            email.is_starred = False
+    elif account.provider == "imap":
+        if "\\Seen" in body.add:
+            email.is_read = True
+        if "\\Seen" in body.remove:
+            email.is_read = False
+        if "\\Flagged" in body.add:
+            email.is_starred = True
+        if "\\Flagged" in body.remove:
+            email.is_starred = False
+
+    await db.commit()
+
+    # Sync label changes back to the provider
+    try:
+        if account.provider == "gmail":
+            from services.gmail_sync import modify_gmail_labels
+            modify_gmail_labels(email.message_id, body.add, body.remove)
+        elif account.provider == "imap":
+            from services.imap_sync import modify_imap_flags
+            # UID is the last segment of message_id: "imap_uid_{username}_{uid}"
+            uid = email.message_id.rsplit("_", 1)[-1]
+            await modify_imap_flags(uid, body.add, body.remove)
+        # Outlook: not yet implemented
+    except Exception as exc:
+        # Return success for local change even if provider sync fails; log the error
+        import logging
+        logging.getLogger(__name__).warning("Provider label sync failed for email %d: %s", email_id, exc)
+
+    return {"id": email_id, "labels": sorted(current)}
 
 
 @router.get("/accounts/list")
