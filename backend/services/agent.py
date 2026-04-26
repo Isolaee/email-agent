@@ -230,47 +230,48 @@ async def _delete_calendar_event(event_id: str) -> str:
 
 
 async def run_agent(messages: list[dict]) -> AsyncGenerator[str, None]:
+    from openai import APIConnectionError, APIStatusError
     settings = get_settings()
     client = AsyncOpenAI(base_url=f"{settings.ollama_base_url}/v1", api_key="ollama", timeout=300.0)
 
     conversation = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
 
-    while True:
-        response = await client.chat.completions.create(
-            model=settings.ollama_model,
-            messages=conversation,
-            tools=TOOLS,
-            stream=False,
-        )
+    try:
+        while True:
+            response = await client.chat.completions.create(
+                model=settings.ollama_model,
+                messages=conversation,
+                tools=TOOLS,
+                stream=False,
+            )
 
-        choice = response.choices[0]
-        message = choice.message
+            choice = response.choices[0]
+            message = choice.message
 
-        if message.tool_calls:
-            conversation.append({"role": "assistant", "content": message.content or "", "tool_calls": [
-                {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
-                for tc in message.tool_calls
-            ]})
+            if message.tool_calls:
+                conversation.append({"role": "assistant", "content": message.content or "", "tool_calls": [
+                    {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                    for tc in message.tool_calls
+                ]})
 
-            for tc in message.tool_calls:
-                args = json.loads(tc.function.arguments)
-                result = await _call_tool(tc.function.name, args)
-                conversation.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+                for tc in message.tool_calls:
+                    args = json.loads(tc.function.arguments)
+                    result = await _call_tool(tc.function.name, args)
+                    conversation.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
-            # Loop again to get final response
-            continue
+                continue
 
-        # Final text response — stream it word by word
-        content = message.content or ""
-        # Stream using a real streaming call now that tools are resolved
-        stream = await client.chat.completions.create(
-            model=settings.ollama_model,
-            messages=conversation + [{"role": "assistant", "content": ""}] if False else conversation,
-            stream=True,
-        )
-        # Re-run as stream for the final answer
-        conversation.append({"role": "assistant", "content": content})
-        for char in content:
-            yield f"data: {json.dumps({'delta': char})}\n\n"
+            content = message.content or ""
+            conversation.append({"role": "assistant", "content": content})
+            for char in content:
+                yield f"data: {json.dumps({'delta': char})}\n\n"
+            yield "data: [DONE]\n\n"
+            break
+    except APIConnectionError:
+        msg = f"Cannot reach Ollama at {settings.ollama_base_url}. Make sure Ollama is running."
+        yield f"data: {json.dumps({'delta': msg})}\n\n"
         yield "data: [DONE]\n\n"
-        break
+    except APIStatusError as e:
+        msg = f"Ollama error {e.status_code}: {e.message}"
+        yield f"data: {json.dumps({'delta': msg})}\n\n"
+        yield "data: [DONE]\n\n"
