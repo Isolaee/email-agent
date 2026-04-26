@@ -1,0 +1,25 @@
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+python-dotenv==1.0.1
+sqlalchemy==2.0.36
+aiosqlite==0.20.0
+apscheduler==3.10.4
+httpx==0.28.1
+
+# Google (Gmail + Calendar)
+google-auth==2.36.0
+google-auth-oauthlib==1.2.1
+google-api-python-client==2.154.0
+
+# Microsoft (Outlook)
+msal==1.31.1
+
+# IMAP (Roundcube)
+aioimaplib==2.0.1
+
+# Ollama tool-use agent
+openai==1.57.4
+
+# Email parsing
+beautifulsoup4==4.12.3
+html2text==2024.2.26
