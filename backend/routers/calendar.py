@@ -18,6 +18,7 @@ class EventCreate(BaseModel):
     end_time: datetime
     attendees: list[str] = []
     calendar_id: str = "primary"
+    reminder_minutes: int | None = None
 
 
 class EventUpdate(BaseModel):
@@ -55,6 +56,7 @@ async def create_event(body: EventCreate):
         end_time=body.end_time,
         attendees=body.attendees,
         calendar_id=body.calendar_id,
+        reminder_minutes=body.reminder_minutes,
     )
     return event
 

@@ -41,6 +41,18 @@ export interface CalendarEvent {
   calendar_id: string;
 }
 
+export interface CreateEventInput {
+  title: string;
+  description: string;
+  location: string;
+  start_time: string;
+  end_time: string;
+  is_all_day: boolean;
+  attendees: string[];
+  calendar_id: string;
+  reminder_minutes?: number | null;
+}
+
 export interface AuthStatus {
   google: boolean;
   microsoft: Record<string, boolean>;
@@ -87,7 +99,7 @@ export const listEvents = (start?: string, end?: string) => {
   if (end) q.set("end", end);
   return get<CalendarEvent[]>(`/api/calendar?${q}`);
 };
-export const createEvent = (body: Omit<CalendarEvent, "id">) => post<CalendarEvent>("/api/calendar", body);
+export const createEvent = (body: CreateEventInput) => post<CalendarEvent>("/api/calendar", body);
 export const deleteEvent = (id: string) => del(`/api/calendar/${id}`);
 export const syncCalendar = () => post<{ synced: number }>("/api/calendar/sync", {});
 

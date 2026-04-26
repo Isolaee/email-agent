@@ -100,6 +100,7 @@ async def create_calendar_event(
     end_time: datetime,
     attendees: list[str],
     calendar_id: str = "primary",
+    reminder_minutes: int | None = None,
 ) -> dict:
     service = _get_service()
     body = {
@@ -109,6 +110,13 @@ async def create_calendar_event(
         "start": {"dateTime": start_time.isoformat(), "timeZone": "UTC"},
         "end": {"dateTime": end_time.isoformat(), "timeZone": "UTC"},
         "attendees": [{"email": e} for e in attendees],
+        "reminders": {
+            "useDefault": reminder_minutes is None,
+            "overrides": (
+                [{"method": "popup", "minutes": reminder_minutes}]
+                if reminder_minutes is not None else []
+            ),
+        },
     }
     event = service.events().insert(calendarId=calendar_id, body=body).execute()
     await sync_events()
