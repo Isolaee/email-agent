@@ -43,9 +43,15 @@ async def sync_events() -> int:
     synced = 0
 
     async with SessionLocal() as db:
+        event_ids = [item["id"] for item in items]
+        existing_rows = (await db.execute(
+            select(CalendarEvent).where(CalendarEvent.google_event_id.in_(event_ids))
+        )).scalars().all()
+        existing_map = {row.google_event_id: row for row in existing_rows}
+
         for item in items:
             event_id = item["id"]
-            existing = (await db.execute(select(CalendarEvent).where(CalendarEvent.google_event_id == event_id))).scalar_one_or_none()
+            existing = existing_map.get(event_id)
 
             start = item.get("start", {})
             end = item.get("end", {})

@@ -1,10 +1,23 @@
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import event
 
 DATABASE_URL = "sqlite+aiosqlite:///./email_agent.db"
 
-engine = create_async_engine(DATABASE_URL, echo=False)
-SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    connect_args={"timeout": 30},
+)
+
+# WAL mode lets multiple readers and one writer coexist without "database is locked"
+@event.listens_for(engine.sync_engine, "connect")
+def _set_wal_mode(dbapi_conn, _):
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.close()
+
+SessionLocal = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
 
 
 class Base(DeclarativeBase):
