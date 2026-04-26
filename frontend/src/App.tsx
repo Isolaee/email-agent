@@ -5,6 +5,7 @@ import EmailDetail from "./components/EmailDetail";
 import CalendarView from "./components/CalendarView";
 import ChatPanel from "./components/ChatPanel";
 import AuthSetup from "./components/AuthSetup";
+import { useNotifications } from "./hooks/useNotifications";
 
 export type View = "inbox" | "calendar" | "auth";
 
@@ -12,6 +13,9 @@ function App() {
   const [view, setView] = useState<View>("inbox");
   const [selectedEmailId, setSelectedEmailId] = useState<number | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
+  const [emailRefreshKey, setEmailRefreshKey] = useState(0);
+
+  useNotifications(() => setEmailRefreshKey((k) => k + 1));
 
   return (
     <div className="flex h-screen bg-gray-950 text-gray-100 overflow-hidden">
@@ -20,7 +24,7 @@ function App() {
       <div className="flex flex-1 overflow-hidden">
         {view === "inbox" && (
           <>
-            <EmailList selectedId={selectedEmailId} onSelect={setSelectedEmailId} />
+            <EmailList selectedId={selectedEmailId} onSelect={setSelectedEmailId} refreshKey={emailRefreshKey} />
             <div className="flex-1 overflow-hidden">
               {selectedEmailId ? (
                 <EmailDetail emailId={selectedEmailId} onClose={() => setSelectedEmailId(null)} />

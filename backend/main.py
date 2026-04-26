@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from db.database import init_db
 from services.scheduler import start_scheduler, stop_scheduler
-from routers import emails, calendar, agent, auth
+from routers import emails, calendar, agent, auth, events
 
 
 @asynccontextmanager
@@ -30,6 +30,7 @@ app.include_router(emails.router, prefix="/api/emails", tags=["emails"])
 app.include_router(calendar.router, prefix="/api/calendar", tags=["calendar"])
 app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+app.include_router(events.router, prefix="/api/events", tags=["events"])
 
 # Serve React build if it exists
 frontend_dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")

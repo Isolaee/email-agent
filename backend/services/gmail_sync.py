@@ -16,6 +16,7 @@ import html2text
 from config import get_settings
 from db.database import SessionLocal
 from db.models import Account, Email, SyncState
+from services.notifier import broadcast
 from sqlalchemy import select
 
 SCOPES = [
@@ -173,6 +174,7 @@ async def _full_sync(service, account_id: int, db) -> tuple[int, str]:
 
 async def _fetch_and_store_messages(service, account_id: int, msg_ids: list[str], db) -> int:
     fetched = 0
+    new_emails: list[dict] = []
     for msg_id in msg_ids:
         existing = (await db.execute(select(Email).where(Email.message_id == msg_id))).scalar_one_or_none()
         if existing:
@@ -190,13 +192,15 @@ async def _fetch_and_store_messages(service, account_id: int, msg_ids: list[str]
 
         body = _decode_body(payload)
         label_ids = msg.get("labelIds", [])
+        subject = _header(headers, "Subject")
+        sender = _header(headers, "From")
 
         db.add(Email(
             account_id=account_id,
             message_id=msg_id,
             thread_id=msg.get("threadId"),
-            subject=_header(headers, "Subject"),
-            sender=_header(headers, "From"),
+            subject=subject,
+            sender=sender,
             recipients=json.dumps([_header(headers, "To")]),
             date=date,
             body_text=body[:50_000],  # cap at 50k chars
@@ -205,8 +209,11 @@ async def _fetch_and_store_messages(service, account_id: int, msg_ids: list[str]
             labels=json.dumps(label_ids),
             raw_snippet=msg.get("snippet", ""),
         ))
+        new_emails.append({"type": "new_email", "subject": subject, "sender": sender})
         fetched += 1
 
     if fetched:
         await db.commit()
+        for event in new_emails:
+            await broadcast(event)
     return fetched

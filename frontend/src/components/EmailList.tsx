@@ -5,6 +5,7 @@ import { formatDistanceToNow } from "date-fns";
 interface Props {
   selectedId: number | null;
   onSelect: (id: number) => void;
+  refreshKey?: number;
 }
 
 const PROVIDER_COLORS: Record<string, string> = {
@@ -13,7 +14,7 @@ const PROVIDER_COLORS: Record<string, string> = {
   imap: "bg-green-600",
 };
 
-export default function EmailList({ selectedId, onSelect }: Props) {
+export default function EmailList({ selectedId, onSelect, refreshKey }: Props) {
   const [emails, setEmails] = useState<EmailSummary[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedAccount, setSelectedAccount] = useState<number | undefined>();
@@ -35,7 +36,7 @@ export default function EmailList({ selectedId, onSelect }: Props) {
     }
   }, [selectedAccount, search, unreadOnly]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, refreshKey]);
 
   // Debounce search
   useEffect(() => {
