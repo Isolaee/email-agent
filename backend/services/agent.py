@@ -1,10 +1,10 @@
-"""AI agent using Ollama via OpenAI-compatible API with tool use."""
+"""AI agent using Anthropic Claude API with tool use and prompt caching."""
 
 import json
 from datetime import datetime
 from typing import AsyncGenerator
 
-from openai import AsyncOpenAI
+import anthropic
 from sqlalchemy import select, desc, or_
 
 from config import get_settings
@@ -19,162 +19,136 @@ When answering questions about emails, always search first. When creating or mod
 
 Be concise. Use markdown for formatting. Dates and times are in UTC unless the user specifies otherwise."""
 
-TOOLS = [
+TOOLS: list[dict] = [
     {
-        "type": "function",
-        "function": {
-            "name": "search_emails",
-            "description": "Search emails by keyword, sender, or subject. Returns a list of matching emails.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search term (matches subject, sender, or body)"},
-                    "account_email": {"type": "string", "description": "Filter by specific account email (optional)"},
-                    "unread_only": {"type": "boolean", "description": "Only return unread emails"},
-                    "limit": {"type": "integer", "description": "Max results (default 10)", "default": 10},
-                },
-                "required": ["query"],
+        "name": "search_emails",
+        "description": "Search emails by keyword, sender, or subject. Returns a list of matching emails.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search term (matches subject, sender, or body)"},
+                "account_email": {"type": "string", "description": "Filter by specific account email (optional)"},
+                "unread_only": {"type": "boolean", "description": "Only return unread emails"},
+                "limit": {"type": "integer", "description": "Max results (default 10)", "default": 10},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "get_email_body",
+        "description": "Get the full body text of a specific email by its ID.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "email_id": {"type": "integer", "description": "The email's numeric ID"},
+            },
+            "required": ["email_id"],
+        },
+    },
+    {
+        "name": "list_recent_emails",
+        "description": "List the most recent emails across all accounts or a specific account.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "account_email": {"type": "string", "description": "Filter by account (optional)"},
+                "unread_only": {"type": "boolean", "description": "Only unread emails"},
+                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20},
             },
         },
     },
     {
-        "type": "function",
-        "function": {
-            "name": "get_email_body",
-            "description": "Get the full body text of a specific email by its ID.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "email_id": {"type": "integer", "description": "The email's numeric ID"},
-                },
-                "required": ["email_id"],
+        "name": "list_calendar_events",
+        "description": "List calendar events in a date range.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "start_date": {"type": "string", "description": "Start date in ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)"},
+                "end_date": {"type": "string", "description": "End date in ISO format"},
             },
+            "required": ["start_date", "end_date"],
         },
     },
     {
-        "type": "function",
-        "function": {
-            "name": "list_recent_emails",
-            "description": "List the most recent emails across all accounts or a specific account.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "account_email": {"type": "string", "description": "Filter by account (optional)"},
-                    "unread_only": {"type": "boolean", "description": "Only unread emails"},
-                    "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20},
-                },
+        "name": "create_calendar_event",
+        "description": "Create a new calendar event.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "description": {"type": "string", "default": ""},
+                "location": {"type": "string", "default": ""},
+                "start_time": {"type": "string", "description": "ISO datetime e.g. 2024-01-15T14:00:00"},
+                "end_time": {"type": "string", "description": "ISO datetime e.g. 2024-01-15T15:00:00"},
+                "attendees": {"type": "array", "items": {"type": "string"}, "description": "List of attendee email addresses"},
             },
+            "required": ["title", "start_time", "end_time"],
         },
     },
     {
-        "type": "function",
-        "function": {
-            "name": "list_calendar_events",
-            "description": "List calendar events in a date range.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "start_date": {"type": "string", "description": "Start date in ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)"},
-                    "end_date": {"type": "string", "description": "End date in ISO format"},
-                },
-                "required": ["start_date", "end_date"],
+        "name": "delete_calendar_event",
+        "description": "Delete a calendar event by its Google event ID.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "event_id": {"type": "string"},
             },
+            "required": ["event_id"],
         },
     },
     {
-        "type": "function",
-        "function": {
-            "name": "create_calendar_event",
-            "description": "Create a new calendar event.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string"},
-                    "description": {"type": "string", "default": ""},
-                    "location": {"type": "string", "default": ""},
-                    "start_time": {"type": "string", "description": "ISO datetime e.g. 2024-01-15T14:00:00"},
-                    "end_time": {"type": "string", "description": "ISO datetime e.g. 2024-01-15T15:00:00"},
-                    "attendees": {"type": "array", "items": {"type": "string"}, "description": "List of attendee email addresses"},
-                },
-                "required": ["title", "start_time", "end_time"],
+        "name": "send_email",
+        "description": "Send a new email from one of the user's accounts.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "account_email": {"type": "string", "description": "The sender account email address"},
+                "to": {"type": "string", "description": "Recipient email address"},
+                "subject": {"type": "string"},
+                "body": {"type": "string", "description": "Plain text email body"},
             },
+            "required": ["account_email", "to", "subject", "body"],
         },
     },
     {
-        "type": "function",
-        "function": {
-            "name": "delete_calendar_event",
-            "description": "Delete a calendar event by its Google event ID.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "event_id": {"type": "string"},
-                },
-                "required": ["event_id"],
+        "name": "reply_to_email",
+        "description": "Reply to an existing email. The recipient, subject, and thread are derived from the original.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "email_id": {"type": "integer", "description": "ID of the email to reply to"},
+                "body": {"type": "string", "description": "Plain text reply body"},
             },
+            "required": ["email_id", "body"],
         },
     },
     {
-        "type": "function",
-        "function": {
-            "name": "send_email",
-            "description": "Send a new email from one of the user's accounts.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "account_email": {"type": "string", "description": "The sender account email address"},
-                    "to": {"type": "string", "description": "Recipient email address"},
-                    "subject": {"type": "string"},
-                    "body": {"type": "string", "description": "Plain text email body"},
+        "name": "label_email",
+        "description": (
+            "Apply or remove labels on an email and sync the change to the provider. "
+            "For Gmail use Gmail label IDs (e.g. 'STARRED', 'UNREAD', or a custom label ID like 'Label_xxx'). "
+            "For IMAP use IMAP flag names (e.g. '\\\\Flagged', '\\\\Seen')."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "email_id": {"type": "integer", "description": "The email's numeric ID"},
+                "add_labels": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Labels to add",
+                    "default": [],
                 },
-                "required": ["account_email", "to", "subject", "body"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "reply_to_email",
-            "description": "Reply to an existing email. The recipient, subject, and thread are derived from the original.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "email_id": {"type": "integer", "description": "ID of the email to reply to"},
-                    "body": {"type": "string", "description": "Plain text reply body"},
+                "remove_labels": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Labels to remove",
+                    "default": [],
                 },
-                "required": ["email_id", "body"],
             },
+            "required": ["email_id"],
         },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "label_email",
-            "description": (
-                "Apply or remove labels on an email and sync the change to the provider. "
-                "For Gmail use Gmail label IDs (e.g. 'STARRED', 'UNREAD', or a custom label ID like 'Label_xxx'). "
-                "For IMAP use IMAP flag names (e.g. '\\\\Flagged', '\\\\Seen')."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "email_id": {"type": "integer", "description": "The email's numeric ID"},
-                    "add_labels": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Labels to add",
-                        "default": [],
-                    },
-                    "remove_labels": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Labels to remove",
-                        "default": [],
-                    },
-                },
-                "required": ["email_id"],
-            },
-        },
+        "cache_control": {"type": "ephemeral"},  # cache tools + system prompt
     },
 ]
 
@@ -418,48 +392,49 @@ async def _delete_calendar_event(event_id: str) -> str:
 
 
 async def run_agent(messages: list[dict]) -> AsyncGenerator[str, None]:
-    from openai import APIConnectionError, APIStatusError
     settings = get_settings()
-    client = AsyncOpenAI(base_url=f"{settings.ollama_base_url}/v1", api_key="ollama", timeout=300.0)
+    if not settings.anthropic_api_key:
+        yield f"data: {json.dumps({'delta': 'ANTHROPIC_API_KEY is not configured.'})}\n\n"
+        yield "data: [DONE]\n\n"
+        return
 
-    conversation = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
+    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    conversation = list(messages)
 
     try:
         while True:
-            response = await client.chat.completions.create(
-                model=settings.ollama_model,
+            async with client.messages.stream(
+                model=settings.anthropic_model,
+                max_tokens=8096,
+                system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
                 messages=conversation,
                 tools=TOOLS,
-                stream=False,
-            )
+            ) as stream:
+                async for text in stream.text_stream:
+                    yield f"data: {json.dumps({'delta': text})}\n\n"
+                final_msg = await stream.get_final_message()
 
-            choice = response.choices[0]
-            message = choice.message
+            conversation.append({"role": "assistant", "content": final_msg.content})
 
-            if message.tool_calls:
-                conversation.append({"role": "assistant", "content": message.content or "", "tool_calls": [
-                    {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
-                    for tc in message.tool_calls
-                ]})
-
-                for tc in message.tool_calls:
-                    args = json.loads(tc.function.arguments)
-                    result = await _call_tool(tc.function.name, args)
-                    conversation.append({"role": "tool", "tool_call_id": tc.id, "content": result})
-
+            if final_msg.stop_reason == "tool_use":
+                tool_results = []
+                for block in final_msg.content:
+                    if block.type == "tool_use":
+                        result = await _call_tool(block.name, block.input)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": result,
+                        })
+                conversation.append({"role": "user", "content": tool_results})
                 continue
 
-            content = message.content or ""
-            conversation.append({"role": "assistant", "content": content})
-            for char in content:
-                yield f"data: {json.dumps({'delta': char})}\n\n"
             yield "data: [DONE]\n\n"
             break
-    except APIConnectionError:
-        msg = f"Cannot reach Ollama at {settings.ollama_base_url}. Make sure Ollama is running."
-        yield f"data: {json.dumps({'delta': msg})}\n\n"
+
+    except anthropic.APIConnectionError:
+        yield f"data: {json.dumps({'delta': 'Cannot reach Anthropic API. Check your network and API key.'})}\n\n"
         yield "data: [DONE]\n\n"
-    except APIStatusError as e:
-        msg = f"Ollama error {e.status_code}: {e.message}"
-        yield f"data: {json.dumps({'delta': msg})}\n\n"
+    except anthropic.APIStatusError as e:
+        yield f"data: {json.dumps({'delta': f'Anthropic API error {e.status_code}: {e.message}'})}\n\n"
         yield "data: [DONE]\n\n"

@@ -25,8 +25,8 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_ssl: bool = False  # False = STARTTLS (port 587), True = implicit SSL (port 465)
 
-    ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "qwen2.5:14b"
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-haiku-4-5-20251001"
 
     sync_interval_seconds: int = 300
     app_port: int = 8000
@@ -34,6 +34,7 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = "../.env"
+        extra = "ignore"
 
     @property
     def gmail_account_list(self) -> list[str]:
