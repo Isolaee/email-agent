@@ -140,11 +140,17 @@ async def sync_gmail():
         if history_id:
             try:
                 history = service.users().history().list(userId="me", startHistoryId=history_id).execute()
-                msg_ids = []
+                msg_ids_added = []
+                label_changed_ids: set[str] = set()
                 for record in history.get("history", []):
                     for msg in record.get("messagesAdded", []):
-                        msg_ids.append(msg["message"]["id"])
-                fetched = await _fetch_and_store_messages(service, acc.id, msg_ids, db)
+                        msg_ids_added.append(msg["message"]["id"])
+                    for msg in record.get("labelsAdded", []):
+                        label_changed_ids.add(msg["message"]["id"])
+                    for msg in record.get("labelsRemoved", []):
+                        label_changed_ids.add(msg["message"]["id"])
+                fetched = await _fetch_and_store_messages(service, acc.id, msg_ids_added, db)
+                await _update_email_labels(service, list(label_changed_ids), db)
                 new_history_id = history.get("historyId", history_id)
             except Exception:
                 # Full sync fallback
@@ -194,6 +200,21 @@ def modify_gmail_labels(message_id: str, add_labels: list[str], remove_labels: l
         id=message_id,
         body={"addLabelIds": add_labels, "removeLabelIds": remove_labels},
     ).execute()
+
+
+async def _update_email_labels(service, msg_ids: list[str], db) -> None:
+    """Re-fetch label state for existing emails using minimal format (no body re-download)."""
+    for msg_id in msg_ids:
+        existing = (await db.execute(select(Email).where(Email.message_id == msg_id))).scalar_one_or_none()
+        if not existing:
+            continue
+        msg = service.users().messages().get(userId="me", id=msg_id, format="minimal").execute()
+        label_ids = msg.get("labelIds", [])
+        existing.is_read = "UNREAD" not in label_ids
+        existing.is_starred = "STARRED" in label_ids
+        existing.labels = json.dumps(label_ids)
+    if msg_ids:
+        await db.commit()
 
 
 async def _fetch_and_store_messages(service, account_id: int, msg_ids: list[str], db) -> int:
