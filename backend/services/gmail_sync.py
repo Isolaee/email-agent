@@ -139,19 +139,28 @@ async def sync_gmail():
         fetched = 0
         if history_id:
             try:
-                history = service.users().history().list(userId="me", startHistoryId=history_id).execute()
                 msg_ids_added = []
                 label_changed_ids: set[str] = set()
-                for record in history.get("history", []):
-                    for msg in record.get("messagesAdded", []):
-                        msg_ids_added.append(msg["message"]["id"])
-                    for msg in record.get("labelsAdded", []):
-                        label_changed_ids.add(msg["message"]["id"])
-                    for msg in record.get("labelsRemoved", []):
-                        label_changed_ids.add(msg["message"]["id"])
+                new_history_id = history_id
+                page_token = None
+                while True:
+                    kwargs: dict = {"userId": "me", "startHistoryId": history_id}
+                    if page_token:
+                        kwargs["pageToken"] = page_token
+                    history = service.users().history().list(**kwargs).execute()
+                    for record in history.get("history", []):
+                        for msg in record.get("messagesAdded", []):
+                            msg_ids_added.append(msg["message"]["id"])
+                        for msg in record.get("labelsAdded", []):
+                            label_changed_ids.add(msg["message"]["id"])
+                        for msg in record.get("labelsRemoved", []):
+                            label_changed_ids.add(msg["message"]["id"])
+                    new_history_id = history.get("historyId", new_history_id)
+                    page_token = history.get("nextPageToken")
+                    if not page_token:
+                        break
                 fetched = await _fetch_and_store_messages(service, acc.id, msg_ids_added, db)
                 await _update_email_labels(service, list(label_changed_ids), db)
-                new_history_id = history.get("historyId", history_id)
             except Exception:
                 # Full sync fallback
                 fetched, new_history_id = await _full_sync(service, acc.id, db)
