@@ -123,6 +123,7 @@ async def sync_gmail():
     async with SessionLocal() as db:
         profile = service.users().getProfile(userId="me").execute()
         gmail_email = profile["emailAddress"]
+        current_history_id = profile.get("historyId", "0")
 
         acc = (await db.execute(select(Account).where(Account.email == gmail_email))).scalar_one_or_none()
         if not acc:
@@ -134,7 +135,9 @@ async def sync_gmail():
         # Get last history ID for incremental sync
         state_key = f"gmail_history_{gmail_email}"
         state_row = (await db.execute(select(SyncState).where(SyncState.key == state_key))).scalar_one_or_none()
-        history_id = state_row.value if state_row else None
+        raw_history_id = state_row.value if state_row else None
+        # "0" means the previous full sync failed to capture a real historyId; treat as missing
+        history_id = raw_history_id if raw_history_id and raw_history_id != "0" else None
 
         fetched = 0
         if history_id:
@@ -161,11 +164,11 @@ async def sync_gmail():
                         break
                 fetched = await _fetch_and_store_messages(service, acc.id, msg_ids_added, db)
                 await _update_email_labels(service, list(label_changed_ids), db)
-            except Exception:
-                # Full sync fallback
-                fetched, new_history_id = await _full_sync(service, acc.id, db)
+            except Exception as e:
+                print(f"[gmail] Incremental sync failed ({e}), falling back to full sync")
+                fetched, new_history_id = await _full_sync(service, acc.id, db, current_history_id)
         else:
-            fetched, new_history_id = await _full_sync(service, acc.id, db)
+            fetched, new_history_id = await _full_sync(service, acc.id, db, current_history_id)
 
         # Update sync state
         if state_row:
@@ -179,13 +182,12 @@ async def sync_gmail():
         print(f"[gmail] Synced {fetched} new messages for {gmail_email}")
 
 
-async def _full_sync(service, account_id: int, db) -> tuple[int, str]:
-    """Fetch last 500 messages on first sync."""
+async def _full_sync(service, account_id: int, db, current_history_id: str = "0") -> tuple[int, str]:
+    """Fetch last 500 messages. current_history_id should come from getProfile so incremental sync can resume."""
     results = service.users().messages().list(userId="me", maxResults=500).execute()
     msg_ids = [m["id"] for m in results.get("messages", [])]
-    history_id = results.get("historyId", "0")
     fetched = await _fetch_and_store_messages(service, account_id, msg_ids, db)
-    return fetched, history_id
+    return fetched, current_history_id
 
 
 def gmail_send(to: str, subject: str, body: str, thread_id: str | None = None) -> str:
